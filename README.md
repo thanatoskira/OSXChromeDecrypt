@@ -9,7 +9,7 @@ Also great for forensic analysis, as you can obtain the safe storage key through
 
 # Information
 
-1. Look for any encrypted password data stored in ```~/Library/Application Support/Google/Chrome/Profiles */Login Data``` 
+1. Look for any encrypted password data stored in ```~/Library/Application Support/Google/Chrome/*/Login Data``` 
 2. Get the decryption key from the keychain WITHOUT having to confirm the users password!
 3. Use this key to decrypt the passwords.
 4. Print out all of the passwords in a user friendly format.
