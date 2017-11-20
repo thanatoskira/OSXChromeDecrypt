@@ -1,11 +1,24 @@
-import sqlite3, os, binascii, subprocess, base64, operator
-import tempfile, shutil, glob, hmac, struct, itertools
+import sqlite3
+import binascii
+import subprocess
+import base64
+import operator
+import tempfile
+import sys
+import shutil
+import glob
+import hmac
+import struct
+import itertools
 
-###Big thanks to @mitsuhiko https://github.com/mitsuhiko/python-pbkdf2 for the below function pbkdf2_bin###
-def pbkdf2_bin(hash_fxn, password, salt, iterations, keylen=16):
+
+def pbkdf2_bin(password, salt, iterations, keylen=16):
+    # thanks to @mitsuhiko for this function
+    # https://github.com/mitsuhiko/python-pbkdf2
     _pack_int = struct.Struct('>I').pack
     hashfunc = sha1
     mac = hmac.new(password, None, hashfunc)
+
     def _pseudorandom(x, mac=mac):
         h = mac.copy()
         h.update(x)
@@ -18,82 +31,177 @@ def pbkdf2_bin(hash_fxn, password, salt, iterations, keylen=16):
             rv = itertools.starmap(operator.xor, itertools.izip(rv, u))
         buf.extend(rv)
     return ''.join(map(chr, buf))[:keylen]
-###Big thanks to @mitsuhiko https://github.com/mitsuhiko/python-pbkdf2 for the above function pbkdf2_bin###
+
 
 try:
     from hashlib import pbkdf2_hmac
 except ImportError:
-    #python version not available (Python <2.7.8, macOS < 10.11)
-    #use @mitsuhiko's pbkdf2 method
+    # python version not available (Python <2.7.8, macOS < 10.11)
+    # use @mitsuhiko's pbkdf2 method
     pbkdf2_hmac = pbkdf2_bin
     from hashlib import sha1
 
-login_data_path = '/Users/*/Library/Application Support/Google/Chrome/*/Login Data'
-cc_data_path = '/Users/*/Library/Application Support/Google/Chrome/*/Web Data'
-chrome_data = glob.glob(login_data_path) + glob.glob(cc_data_path)
-safe_storage_key = subprocess.Popen("security find-generic-password -wa 'Chrome'", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
-if safe_storage_key.wait() != 0:
-    print '%sERROR getting Chrome Safe Storage Key%s' % ('\033[91m', '\033[0m')
-    if safe_storage_key.wait() == 51:
-        print 'User clicked deny'
-    elif safe_storage_key.wait() == 44:
-        print 'Chrome entry not found in user keychain'
-    else:
-        print safe_storage_key.stderr.read()
-    exit()
-safe_storage_key = safe_storage_key.stdout.read().replace('\n', '')
 
-def get_cc(cc_num):
-    cc_dict = {3: 'AMEX', 4: 'Visa', 5: 'Mastercard', 6: 'Discover'}
-    try:
-        return cc_dict[cc_num[0]]
-    except KeyError:
-        return "Unknown Card Issuer"
+def chrome_decrypt(encrypted, safe_storage_key):
+    """
+    AES decryption using the PBKDF2 key and 16x ' ' IV
+    via openSSL (installed on OSX natively)
 
-def chrome_decrypt(encrypted, iv, key): #AES decryption using the PBKDF2 key and 16x ' ' IV, via openSSL (installed on OSX natively)
+    salt, iterations, iv, size @
+    https://cs.chromium.org/chromium/src/components/os_crypt/os_crypt_mac.mm
+    """
+
+    iv = ''.join(('20',) * 16)
+    key = pbkdf2_hmac('sha1', safe_storage_key, b'saltysalt', 1003)[:16]
+
     hex_key = binascii.hexlify(key)
     hex_enc_password = base64.b64encode(encrypted[3:])
-    try: #send any error messages to /dev/null to prevent screen bloating up
-        decrypted = subprocess.check_output("openssl enc -base64 -d -aes-128-cbc -iv '%s' -K %s <<< %s 2>/dev/null" % (iv, hex_key, hex_enc_password), shell=True)
-    except Exception as e:
-        decrypted = 'ERROR retrieving password'
+
+    # send any error messages to /dev/null to prevent screen bloating up
+    # (any decryption errors will give a non-zero exit, causing exception)
+    try:
+        decrypted = subprocess.check_output("openssl enc -base64 -d "
+                                            "-aes-128-cbc -iv '{}' -K {} <<< "
+                                            "{} 2>/dev/null".format(iv,
+                                            hex_key, hex_enc_password),
+                                            shell=True)
+    except subprocess.CalledProcessError:
+        decrypted = "Error decrypting this data"
+
     return decrypted
 
-def chrome_process(safe_storage_key, chrome_data):
-    iv = ''.join(('20',) * 16) #salt, iterations, iv, size - https://cs.chromium.org/chromium/src/components/os_crypt/os_crypt_mac.mm
-    key = pbkdf2_hmac('sha1', safe_storage_key, b'saltysalt', 1003)[:16]
-    copy_path = tempfile.mkdtemp() #work around for locking DB
+
+def chrome_db(chrome_data, content_type):
+    """
+    Queries the chrome database (either Web Data or Login Data)
+    and returns a list of dictionaries, with the keys specified
+    in the list assigned to keys.
+
+    @type chrome_data: list
+    @param chrome_data: POSIX path to chrome database with login / cc data
+    @type content_type: string
+    @param content_type: specify what kind of database it is (login or cc)
+
+    @rtype: list
+    @return: list of dictionaries with keys specified in the keys variable
+             and the values retrieved from the DB.
+    """
+    # work around for locking DB
+    copy_path = tempfile.mkdtemp()
     with open(chrome_data, 'r') as content:
         dbcopy = content.read()
-    with open('%s/chrome' % copy_path, 'w') as content:
-        content.write(dbcopy) #if chrome is open, the DB will be locked, so get around by making a temp copy
-    database = sqlite3.connect('%s/chrome' % copy_path)
-    if 'Web Data' in chrome_data:
-        sql = 'select name_on_card, card_number_encrypted, expiration_month, expiration_year from credit_cards'
+    with open("{}/chrome".format(copy_path), 'w') as content:
+        # if chrome is open, the DB will be locked
+        # so get around this by making a temp copy
+        content.write(dbcopy)
+
+    database = sqlite3.connect("{}/chrome".format(copy_path))
+
+    if content_type == "Web Data":
+        sql = ("select name_on_card, card_number_encrypted, expiration_month, "
+               "expiration_year from credit_cards")
+        keys = ["name", "card", "exp_m", "exp_y"]
+
     else:
-        sql = 'select username_value, password_value, origin_url, submit_element from logins'
-    decrypted_list = []
+        sql = "select username_value, password_value, origin_url from logins"
+        keys = ["user", "pass", "url"]
+
+    db_data = []
     with database:
         for values in database.execute(sql):
-            #values will be (name_on_card, card_number_encrypted, expiration_month, expiration_year) or (username_value, password_value, origin_url, submit_element)
-            if values[0] == '' or (values[1][:3] != b'v10'): #user will be empty if they have selected "never" store password
+            if not values[0] or (values[1][:3] != b'v10'):
                 continue
             else:
-                decrypted_list.append((str(values[2]).encode('ascii', 'ignore'), values[0].encode('ascii', 'ignore'), str(chrome_decrypt(values[1], iv, key)).encode('ascii', 'ignore'), values[3]))
+                db_data.append(dict(zip(keys, values)))
     shutil.rmtree(copy_path)
-    return decrypted_list
 
-def chrome():
+    return db_data
+
+
+def chrome(chrome_data, safe_storage_key):
+    """
+    Calls the database querying and decryption functions
+    and displays the output in a neat and ordered fashion
+    (with colors)
+
+    @type chrome_data: list
+    @param chrome_data: POSIX path to chrome database with login / cc data
+    @type safe_storage_key: string
+    @param safe_storage_key: key from keychain that will be used to
+                             derive AES key.
+
+    @rtype: None
+    @return: None. All data is printed in this function, which is it's primary
+             function.
+    """
     for profile in chrome_data:
-        for i, x in enumerate(chrome_process(safe_storage_key, "%s" % profile)):
-            if 'Web Data' in profile:
-                if i == 0:
-                    print "%sCredit Cards for Chrome Profile%s -> [%s%s%s]" % ('\033[92m', '\033[0m', '\033[95m', profile.split('/')[-2], '\033[0m')
-                print "   %s[%s]%s %s%s%s\n\t%sCard Name%s: %s\n\t%sCard Number%s: %s\n\t%sExpiration Date: %s%s/%s" % ('\033[32m', (i+1), '\033[0m', '\033[1m', get_cc(x[2]), '\033[0m', '\033[32m', '\033[0m', x[1], '\033[32m', '\033[0m', x[2], '\033[32m', '\033[0m', x[0], x[3])
-            else:
-                if i == 0:
-                    print "%sPasswords for Chrome Profile%s -> [%s%s%s]" % ('\033[92m', '\033[0m', '\033[95m', profile.split('/')[-2], '\033[0m')
-                print "   %s[%s]%s %s%s%s\n\t%sUser%s: %s\n\t%sPass%s: %s" % ('\033[32m', (i + 1), '\033[0m', '\033[1m', x[0], '\033[0m', '\033[32m', '\033[0m', x[1], '\033[32m', '\033[0m', x[2])
+        # web data -> credit cards
+        # login data -> login data
+
+        green = "\033[32m"
+        violet = "\033[35m"
+        blue = "\033[34m"
+        bold = "\033[1m"
+        end = "\033[0m"
+
+        if "Web Data" in profile:
+            db_data = chrome_db(profile, "Web Data")
+
+            print("{}Credit Cards for Chrome "
+                  "Profile{} -> [{}{}{}]".format(blue, end, violet,
+                                                 profile.split("/")[-2], end))
+
+            for i, entry in enumerate(db_data):
+                entry["card"] = chrome_decrypt(entry["card"],
+                                               safe_storage_key)
+                cc_dict = {'3': 'AMEX', '4': 'Visa',
+                           '5': 'Mastercard', '6': 'Discover'}
+
+                brand = "Unknown Card Issuer"
+                if entry["card"][0] in cc_dict:
+                    brand = cc_dict[entry["card"][0]]
+
+                print("  {}[{}]{} {}{}{}".format(green, i + 1, end,
+                                                 bold, brand, end))
+                print("\t{}Card Holder{}: {}".format(green, end,
+                                                     entry["name"]))
+                print("\t{}Card Number{}: {}".format(green, end,
+                                                     entry["card"]))
+                print("\t{}Expiration{}: {}/{}".format(green, end,
+                                                       entry["exp_m"],
+                                                       entry["exp_y"],))
+
+        else:
+            db_data = chrome_db(profile, "Login Data")
+
+            print("{}Passwords for Chrome "
+                  "Profile{} -> [{}{}{}]".format(blue, end, violet,
+                                                 profile.split("/")[-2], end))
+
+            for i, entry in enumerate(db_data):
+                entry["pass"] = chrome_decrypt(entry["pass"], safe_storage_key)
+
+                print("  {}[{}]{} {}{}{}".format(green, i + 1, end,
+                                                 bold, entry["url"], end))
+                print("\t{}User{}: {}".format(green, end, entry["user"]))
+                print("\t{}Pass{}: {}".format(green, end, entry["pass"]))
+
 
 if __name__ == '__main__':
-    chrome()
+    root_path = "/Users/*/Library/Application Support/Google/Chrome"
+    login_data_path = "{}/*/Login Data".format(root_path)
+    cc_data_path = "{}/*/Web Data".format(root_path)
+    chrome_data = glob.glob(login_data_path) + glob.glob(cc_data_path)
+    safe_storage_key = subprocess.Popen("security find-generic-password -wa "
+                                        "'Chrome'", stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, shell=True)
+    stdout, stderr = safe_storage_key.communicate()
+
+    if stderr:
+        print("Error: {}. Chrome entry not found in keychain?".format(stderr))
+        sys.exit()
+    if not stdout:
+        print("User clicked deny.")
+
+    safe_storage_key = stdout.replace("\n", "")
+    chrome(chrome_data, safe_storage_key)
