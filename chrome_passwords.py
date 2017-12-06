@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sqlite3
 import binascii
 import subprocess
@@ -117,6 +118,18 @@ def chrome_db(chrome_data, content_type):
 
     return db_data
 
+def utfout(inputvar):
+    """
+    Cleans a variable for UTF8 encoding on some enviroments
+    where python will break with an error
+    @credit: koconder
+
+    @type inputvar: string
+    @param inputvar: string to be cleaned for UTF8 encoding
+    @rtype inputvar: terminal compatible UTF-8 string encoded
+    @return inputvar: terminal compatible UTF-8 string encoded
+    """
+    return inputvar.encode(sys.stdout.encoding, errors='replace')
 
 def chrome(chrome_data, safe_storage_key):
     """
@@ -163,13 +176,9 @@ def chrome(chrome_data, safe_storage_key):
 
                 print("  {}[{}]{} {}{}{}".format(green, i + 1, end,
                                                  bold, brand, end))
-                print("\t{}Card Holder{}: {}".format(green, end,
-                                                     entry["name"]))
-                print("\t{}Card Number{}: {}".format(green, end,
-                                                     entry["card"]))
-                print("\t{}Expiration{}: {}/{}".format(green, end,
-                                                       entry["exp_m"],
-                                                       entry["exp_y"],))
+                print("\t{}Card Holder{}: {}".format(green, end, utfout(entry["name"]) ))
+                print("\t{}Card Number{}: {}".format(green, end, utfout(entry["card"]) ))
+                print("\t{}Expiration{}: {}/{}".format(green, end, utfout(entry["exp_m"]), utfout(entry["exp_y"])) )
 
         else:
             db_data = chrome_db(profile, "Login Data")
@@ -181,10 +190,9 @@ def chrome(chrome_data, safe_storage_key):
             for i, entry in enumerate(db_data):
                 entry["pass"] = chrome_decrypt(entry["pass"], safe_storage_key)
 
-                print("  {}[{}]{} {}{}{}".format(green, i + 1, end,
-                                                 bold, entry["url"], end))
-                print("\t{}User{}: {}".format(green, end, entry["user"]))
-                print("\t{}Pass{}: {}".format(green, end, entry["pass"]))
+                print("  {}[{}]{} {}{}{}".format(green, i + 1, end, bold, utfout(entry["url"]), end))
+                print("\t{}User{}: {}".format(green, end, utfout(entry["user"]) ))
+                print("\t{}Pass{}: {}".format(green, end, utfout(entry["pass"]) ))
 
 
 if __name__ == '__main__':
