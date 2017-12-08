@@ -24,6 +24,7 @@ def pbkdf2_bin(password, salt, iterations, keylen=16):
         h = mac.copy()
         h.update(x)
         return map(ord, h.digest())
+
     buf = []
     for block in xrange(1, -(-keylen // mac.digest_size) + 1):
         rv = u = _pseudorandom(salt + _pack_int(block))
@@ -52,7 +53,7 @@ def chrome_decrypt(encrypted, safe_storage_key):
     https://cs.chromium.org/chromium/src/components/os_crypt/os_crypt_mac.mm
     """
 
-    iv = ''.join(('20',) * 16)
+    iv = ''.join(('20', ) * 16)
     key = pbkdf2_hmac('sha1', safe_storage_key, b'saltysalt', 1003)[:16]
 
     hex_key = binascii.hexlify(key)
@@ -61,11 +62,11 @@ def chrome_decrypt(encrypted, safe_storage_key):
     # send any error messages to /dev/null to prevent screen bloating up
     # (any decryption errors will give a non-zero exit, causing exception)
     try:
-        decrypted = subprocess.check_output("openssl enc -base64 -d "
-                                            "-aes-128-cbc -iv '{}' -K {} <<< "
-                                            "{} 2>/dev/null".format(iv,
-                                            hex_key, hex_enc_password),
-                                            shell=True)
+        decrypted = subprocess.check_output(
+            "openssl enc -base64 -d "
+            "-aes-128-cbc -iv '{}' -K {} <<< "
+            "{} 2>/dev/null".format(iv, hex_key, hex_enc_password),
+            shell=True)
     except subprocess.CalledProcessError:
         decrypted = "Error decrypting this data"
 
@@ -118,6 +119,7 @@ def chrome_db(chrome_data, content_type):
 
     return db_data
 
+
 def utfout(inputvar):
     """
     Cleans a variable for UTF8 encoding on some enviroments
@@ -130,6 +132,7 @@ def utfout(inputvar):
     @return inputvar: terminal compatible UTF-8 string encoded
     """
     return inputvar.encode(sys.stdout.encoding, errors='replace')
+
 
 def chrome(chrome_data, safe_storage_key):
     """
@@ -165,20 +168,27 @@ def chrome(chrome_data, safe_storage_key):
                                                  profile.split("/")[-2], end))
 
             for i, entry in enumerate(db_data):
-                entry["card"] = chrome_decrypt(entry["card"],
-                                               safe_storage_key)
-                cc_dict = {'3': 'AMEX', '4': 'Visa',
-                           '5': 'Mastercard', '6': 'Discover'}
+                entry["card"] = chrome_decrypt(entry["card"], safe_storage_key)
+                cc_dict = {
+                    '3': 'AMEX',
+                    '4': 'Visa',
+                    '5': 'Mastercard',
+                    '6': 'Discover'
+                }
 
                 brand = "Unknown Card Issuer"
                 if entry["card"][0] in cc_dict:
                     brand = cc_dict[entry["card"][0]]
 
-                print("  {}[{}]{} {}{}{}".format(green, i + 1, end,
-                                                 bold, brand, end))
-                print("\t{}Card Holder{}: {}".format(green, end, utfout(entry["name"]) ))
-                print("\t{}Card Number{}: {}".format(green, end, utfout(entry["card"]) ))
-                print("\t{}Expiration{}: {}/{}".format(green, end, utfout(entry["exp_m"]), utfout(entry["exp_y"])) )
+                print("  {}[{}]{} {}{}{}".format(green, i + 1, end, bold,
+                                                 brand, end))
+                print("\t{}Card Holder{}: {}".format(green, end,
+                                                     utfout(entry["name"])))
+                print("\t{}Card Number{}: {}".format(green, end,
+                                                     utfout(entry["card"])))
+                print("\t{}Expiration{}: {}/{}".format(green, end,
+                                                       utfout(entry["exp_m"]),
+                                                       utfout(entry["exp_y"])))
 
         else:
             db_data = chrome_db(profile, "Login Data")
@@ -190,9 +200,12 @@ def chrome(chrome_data, safe_storage_key):
             for i, entry in enumerate(db_data):
                 entry["pass"] = chrome_decrypt(entry["pass"], safe_storage_key)
 
-                print("  {}[{}]{} {}{}{}".format(green, i + 1, end, bold, utfout(entry["url"]), end))
-                print("\t{}User{}: {}".format(green, end, utfout(entry["user"]) ))
-                print("\t{}Pass{}: {}".format(green, end, utfout(entry["pass"]) ))
+                print("  {}[{}]{} {}{}{}".format(green, i + 1, end, bold,
+                                                 utfout(entry["url"]), end))
+                print("\t{}User{}: {}".format(green, end, utfout(
+                    entry["user"])))
+                print("\t{}Pass{}: {}".format(green, end, utfout(
+                    entry["pass"])))
 
 
 if __name__ == '__main__':
@@ -200,9 +213,12 @@ if __name__ == '__main__':
     login_data_path = "{}/*/Login Data".format(root_path)
     cc_data_path = "{}/*/Web Data".format(root_path)
     chrome_data = glob.glob(login_data_path) + glob.glob(cc_data_path)
-    safe_storage_key = subprocess.Popen("security find-generic-password -wa "
-                                        "'Chrome'", stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, shell=True)
+    safe_storage_key = subprocess.Popen(
+        "security find-generic-password -wa "
+        "'Chrome'",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True)
     stdout, stderr = safe_storage_key.communicate()
 
     if stderr:
