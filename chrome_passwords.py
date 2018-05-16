@@ -131,7 +131,18 @@ def utfout(inputvar):
     @rtype inputvar: terminal compatible UTF-8 string encoded
     @return inputvar: terminal compatible UTF-8 string encoded
     """
-    return inputvar.encode(sys.stdout.encoding, errors='replace')
+    if isinstance(inputvar, (int, float, complex)):
+        return str(inputvar)
+    try:
+        return inputvar.encode(sys.stdout.encoding, errors='replace')
+    except TypeError:
+        try:
+            return str(inputvar).encode('utf-8')
+        except AttributeError:
+            return inputvar
+    except AttributeError:
+        return inputvar
+    return inputvar # assume it was already utf-8
 
 
 def chrome(chrome_data, safe_storage_key):
